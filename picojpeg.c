@@ -155,9 +155,10 @@ static int16 gLastDC[3];
 
 typedef struct HuffTableT
 {
-   uint16 mMinCode[16];
+   uint8  mGetMore[16];
+   uint8  mMinCode[16];
    uint16 mMaxCode[16];
-   uint8 mValPtr[16];
+   uint8  mValPtr[16];
 } HuffTable;
 
 // DC - 192
@@ -261,6 +262,24 @@ static PJPG_INLINE void stuffChar(uint8 i)
    gInBufLeft++;
 }
 //------------------------------------------------------------------------------
+static PJPG_INLINE void skipChars(uint16 n)
+{
+    // skip characters fast
+    while (n > gInBufLeft)
+    {
+        n -= gInBufLeft;
+        gInBufOfs += gInBufLeft;
+        gInBufLeft = 0;
+        getChar();
+        n--;
+        if (!gInBufLeft)
+            return;
+    }
+
+    while (n--)
+        getChar();
+}
+//------------------------------------------------------------------------------
 static PJPG_INLINE uint8 getOctet(uint8 FFCheck)
 {
    uint8 c = getChar();
@@ -283,7 +302,7 @@ static uint16 getBits(uint8 numBits, uint8 FFCheck)
 {
    uint8 origBits = numBits;
    uint16 ret = gBitBuf;
-   
+
    if (numBits > 8)
    {
       numBits -= 8;
@@ -345,57 +364,28 @@ static PJPG_INLINE uint8 getBit(void)
    return ret;
 }
 //------------------------------------------------------------------------------
-static uint16 getExtendTest(uint8 i)
-{
-   switch (i)
-   {
-      case 0: return 0;
-      case 1: return 0x0001;
-      case 2: return 0x0002;
-      case 3: return 0x0004;
-      case 4: return 0x0008;
-      case 5: return 0x0010; 
-      case 6: return 0x0020;
-      case 7: return 0x0040;
-      case 8:  return 0x0080;
-      case 9:  return 0x0100;
-      case 10: return 0x0200;
-      case 11: return 0x0400;
-      case 12: return 0x0800;
-      case 13: return 0x1000;
-      case 14: return 0x2000; 
-      case 15: return 0x4000;
-      default: return 0;
-   }      
-}
+uint16 extendTests[] = {
+  0,     0x1,   0x2,   0x4,   0x8,   0x10,   0x20,   0x40,
+  0x80,  0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000
+};
 //------------------------------------------------------------------------------
-static int16 getExtendOffset(uint8 i)
-{ 
-   switch (i)
-   {
-      case 0: return 0;
-      case 1: return ((-1)<<1) + 1; 
-      case 2: return ((-1)<<2) + 1; 
-      case 3: return ((-1)<<3) + 1; 
-      case 4: return ((-1)<<4) + 1; 
-      case 5: return ((-1)<<5) + 1; 
-      case 6: return ((-1)<<6) + 1; 
-      case 7: return ((-1)<<7) + 1; 
-      case 8: return ((-1)<<8) + 1; 
-      case 9: return ((-1)<<9) + 1;
-      case 10: return ((-1)<<10) + 1; 
-      case 11: return ((-1)<<11) + 1; 
-      case 12: return ((-1)<<12) + 1; 
-      case 13: return ((-1)<<13) + 1; 
-      case 14: return ((-1)<<14) + 1; 
-      case 15: return ((-1)<<15) + 1;
-      default: return 0;
-   }
+uint16 extendOffsets[] = {
+  ((-1)<<0) + 1,  ((-1)<<1) + 1,  ((-1)<<2) + 1,  ((-1)<<3) + 1,  ((-1)<<4) + 1,
+  ((-1)<<5) + 1,  ((-1)<<6) + 1,  ((-1)<<7) + 1,  ((-1)<<8) + 1,  ((-1)<<9) + 1,
+  ((-1)<<10) + 1, ((-1)<<11) + 1, ((-1)<<12) + 1, ((-1)<<13) + 1, ((-1)<<14) + 1,
+  ((-1)<<15) + 1
 };
 //------------------------------------------------------------------------------
 static PJPG_INLINE int16 huffExtend(uint16 x, uint8 s)
 {
-   return ((x < getExtendTest(s)) ? ((int16)x + getExtendOffset(s)) : (int16)x);
+  if (s < 16)
+  {
+      uint16 t = extendTests[s];
+      if (t > x)
+          return (int16)x + extendOffsets[s];
+  }
+
+  return (int16)x;
 }
 //------------------------------------------------------------------------------
 static PJPG_INLINE uint8 huffDecode(const HuffTable* pHuffTable, const uint8* pHuffVal)
@@ -409,14 +399,14 @@ static PJPG_INLINE uint8 huffDecode(const HuffTable* pHuffTable, const uint8* pH
    // more reasonable approach.
    for ( ; ; )
    {
-      uint16 maxCode;
-
       if (i == 16)
          return 0;
 
-      maxCode = pHuffTable->mMaxCode[i];
-      if ((code <= maxCode) && (maxCode != 0xFFFF))
-         break;
+      if (!pHuffTable->mGetMore[i])
+      {
+        if (code <= pHuffTable->mMaxCode[i])
+           break;
+      }
 
       i++;
       code <<= 1;
@@ -440,15 +430,11 @@ static void huffCreate(const uint8* pBits, HuffTable* pHuffTable)
    {
       uint8 num = pBits[i];
       
-      if (!num)
+      if (num)
       {
-         pHuffTable->mMinCode[i] = 0x0000;
-         pHuffTable->mMaxCode[i] = 0xFFFF;
-         pHuffTable->mValPtr[i] = 0;
-      }
-      else
-      {
-         pHuffTable->mMinCode[i] = code;
+         // minCode's high byte is never used in huffDecode(),
+         // we might as well drop it right now.
+         pHuffTable->mMinCode[i] = (uint8)code;
          pHuffTable->mMaxCode[i] = code + num - 1;
          pHuffTable->mValPtr[i] = j;
          
@@ -456,6 +442,8 @@ static void huffCreate(const uint8* pBits, HuffTable* pHuffTable)
          
          code = (uint16)(code + num);
       }
+      else
+         pHuffTable->mGetMore[i] = 1;
       
       code <<= 1;
       
@@ -653,18 +641,32 @@ static uint8 readSOFMarker(void)
 static uint8 skipVariableMarker(void)
 {
    uint16 left = getBits1(16);
+   uint16 safeSkip;
 
-   if (left < 2)
-      return PJPG_BAD_VARIABLE_MARKER;
-
-   left -= 2;
-
-   while (left)
+   switch (left)
    {
-      getBits1(8);
-      left--;
+      case 0:
+      case 1:
+          return PJPG_BAD_VARIABLE_MARKER;
+      case 2:
+          return 0;
+      case 3: 
+          getBits1(8);
+          return 0;
+      default:
+          safeSkip = left - 4;
+          left = 2;
    }
-   
+
+   // Avoid shifting gBitBuf for all but the last
+   // two bytes that we want to skip.
+   skipChars(safeSkip);
+
+   while(left--)
+   {
+     getBits1(8);
+   }
+
    return 0;
 }
 //------------------------------------------------------------------------------
@@ -2140,7 +2142,12 @@ static uint8 decodeNextMCU(void)
       const int16* pQ = compQuant ? gQuant1 : gQuant0;
       uint16 r, dc;
 
-      uint8 s = huffDecode(compDCTab ? &gHuffTab1 : &gHuffTab0, compDCTab ? gHuffVal1 : gHuffVal0);
+      uint8 s;
+      
+      if (compDCTab)
+          s = huffDecode(&gHuffTab1, gHuffVal1);
+      else
+          s = huffDecode(&gHuffTab0, gHuffVal0);
       
       r = 0;
       numExtraBits = s & 0xF;
@@ -2160,7 +2167,10 @@ static uint8 decodeNextMCU(void)
          // Decode, but throw out the AC coefficients in reduce mode.
          for (k = 1; k < 64; k++)
          {
-            s = huffDecode(compACTab ? &gHuffTab3 : &gHuffTab2, compACTab ? gHuffVal3 : gHuffVal2);
+            if (compACTab)
+                s = huffDecode(&gHuffTab3, gHuffVal3);
+            else
+                s = huffDecode(&gHuffTab2, gHuffVal2);
 
             numExtraBits = s & 0xF;
             if (numExtraBits)
@@ -2202,7 +2212,10 @@ static uint8 decodeNextMCU(void)
          {
             uint16 extraBits;
 
-            s = huffDecode(compACTab ? &gHuffTab3 : &gHuffTab2, compACTab ? gHuffVal3 : gHuffVal2);
+            if (compACTab)
+                s = huffDecode(&gHuffTab3, gHuffVal3);
+            else
+                s = huffDecode(&gHuffTab2, gHuffVal2);
 
             extraBits = 0;
             numExtraBits = s & 0xF;
