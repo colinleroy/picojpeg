@@ -156,7 +156,6 @@ static int16 gLastDC[3];
 typedef struct HuffTableT
 {
    uint8  mGetMore[16];
-   uint8  mMinCode[16];
    uint16 mMaxCode[16];
    uint8  mValPtr[16];
 } HuffTable;
@@ -413,8 +412,7 @@ static PJPG_INLINE uint8 huffDecode(const HuffTable* pHuffTable, const uint8* pH
       code |= getBit();
    }
 
-   j = pHuffTable->mValPtr[i];
-   j = (uint8)(j + (code - pHuffTable->mMinCode[i]));
+   j = (uint8)(pHuffTable->mValPtr[i] + code);
 
    return pHuffVal[j];
 }
@@ -432,11 +430,8 @@ static void huffCreate(const uint8* pBits, HuffTable* pHuffTable)
       
       if (num)
       {
-         // minCode's high byte is never used in huffDecode(),
-         // we might as well drop it right now.
-         pHuffTable->mMinCode[i] = (uint8)code;
          pHuffTable->mMaxCode[i] = code + num - 1;
-         pHuffTable->mValPtr[i] = j;
+         pHuffTable->mValPtr[i] = j - (uint8)code;
          
          j = (uint8)(j + num);
          
