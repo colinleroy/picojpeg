@@ -2155,6 +2155,11 @@ static uint8 decodeNextMCU(void)
             
       gCoeffBuf[0] = dc * pQ[0];
 
+      /* Pre-zero the other coeffs */
+      for (k = 1; k < 64; k++) {
+        gCoeffBuf[k] = 0;
+      }
+
       compACTab = gCompACTab[componentID];
 
       if (gReduce)
@@ -2229,11 +2234,7 @@ static uint8 decodeNextMCU(void)
                   if ((k + r) > 63)
                      return PJPG_DECODE_ERROR;
 
-                  while (r)
-                  {
-                     gCoeffBuf[ZAG[k++]] = 0;
-                     r--;
-                  }
+                  k = (uint8)(k + r);
                }
 
                ac = huffExtend(extraBits, s);
@@ -2247,18 +2248,12 @@ static uint8 decodeNextMCU(void)
                   if ((k + 16) > 64)
                      return PJPG_DECODE_ERROR;
                   
-                  for (r = 16; r > 0; r--)
-                     gCoeffBuf[ZAG[k++]] = 0;
-                  
-                  k--; // - 1 because the loop counter is k
+                  k += (16 - 1); // - 1 because the loop counter is k
                }
                else
                   break;
             }
          }
-         
-         while (k < 64)
-            gCoeffBuf[ZAG[k++]] = 0;
 
          transformBlock(mcuBlock); 
       }
