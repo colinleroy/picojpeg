@@ -403,7 +403,7 @@ static PJPG_INLINE uint8 huffDecode(const HuffTable* pHuffTable, const uint8* pH
 
       if (!pHuffTable->mGetMore[i])
       {
-        if (code <= pHuffTable->mMaxCode[i])
+        if (code < pHuffTable->mMaxCode[i])
            break;
       }
 
@@ -430,7 +430,7 @@ static void huffCreate(const uint8* pBits, HuffTable* pHuffTable)
       
       if (num)
       {
-         pHuffTable->mMaxCode[i] = code + num - 1;
+         pHuffTable->mMaxCode[i] = code + num;
          pHuffTable->mValPtr[i] = j - (uint8)code;
          
          j = (uint8)(j + num);
